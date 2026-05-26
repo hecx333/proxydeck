@@ -1,0 +1,44 @@
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      PROXYDECK_SQLITE_PATH: /app/data/app.db
+      PROXYDECK_REDIS_ADDR: redis:6379
+      PROXYDECK_SECURITY_ENCRYPTION_KEY: ${PROXYDECK_SECURITY_ENCRYPTION_KEY}
+      PROXYDECK_ADMIN_USERNAME: ${PROXYDECK_ADMIN_USERNAME:-admin}
+      PROXYDECK_ADMIN_PASSWORD: ${PROXYDECK_ADMIN_PASSWORD}
+    ports:
+      - "8080:8080"
+      - "20000:20000"
+    volumes:
+      - ./data:/app/data
+      - ./backend/configs:/app/backend/configs
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "5173:80"

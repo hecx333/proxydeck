@@ -1,0 +1,35 @@
+server:
+  proxy_listen: "0.0.0.0:20000"
+  admin_listen: "0.0.0.0:8080"
+  proxy_dial_timeout_seconds: 10
+  proxy_idle_timeout_seconds: 90
+  proxy_response_header_timeout_seconds: 15
+  proxy_connect_timeout_seconds: 15
+
+sqlite:
+  path: "./data/app.db"
+
+redis:
+  addr: "127.0.0.1:6379"
+  password: ""
+  db: 0
+
+healthcheck:
+  interval_seconds: 300
+  timeout_seconds: 10
+  max_fail_count: 3
+
+retry:
+  max_attempts: 3
+  base_backoff_ms: 500
+
+sticky:
+  ttl_seconds: 3600
+
+security:
+  encryption_key: "change-this-with-a-strong-random-secret"
+  session_ttl_seconds: 86400
+
+admin:
+  username: "admin"
+  password: "change-this-before-first-run"
