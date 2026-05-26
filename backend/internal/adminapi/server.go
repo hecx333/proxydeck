@@ -427,12 +427,14 @@ func (s *Server) syncSubscription(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
-	healthSummary := s.healthcheck.CheckNodes(c.Request.Context(), syncResult.ImportedNodeIDs)
+	if len(syncResult.ImportedNodeIDs) > 0 {
+		go s.healthcheck.CheckNodes(context.Background(), syncResult.ImportedNodeIDs)
+	}
 	s.audit(c, "sync_subscription", "subscription", c.Param("id"), "")
 	c.JSON(http.StatusOK, gin.H{
-		"ok":             true,
-		"imported_count": syncResult.ImportedCount,
-		"healthcheck":    healthSummary,
+		"ok":                  true,
+		"imported_count":      syncResult.ImportedCount,
+		"healthcheck_started": len(syncResult.ImportedNodeIDs) > 0,
 	})
 }
 

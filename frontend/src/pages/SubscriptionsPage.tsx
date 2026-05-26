@@ -48,8 +48,8 @@ export function SubscriptionsPage() {
       if (!result?.syncResult) {
         return;
       }
-      const { imported_count, healthcheck } = result.syncResult;
-      message.success(`Successfully imported ${imported_count} nodes (Healthy: ${healthcheck.healthy}, Unhealthy: ${healthcheck.unhealthy})`);
+      const { imported_count } = result.syncResult;
+      message.success(`Successfully imported ${imported_count} nodes. Health checks are running in the background.`);
     }
   });
 
@@ -58,7 +58,7 @@ export function SubscriptionsPage() {
     onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: ["subscriptions"] });
       await queryClient.invalidateQueries({ queryKey: ["nodes"] });
-      message.success(`Sync completed! ${result.healthcheck.total} nodes checked (Healthy: ${result.healthcheck.healthy}, Unhealthy: ${result.healthcheck.unhealthy})`);
+      message.success(`Sync completed. Imported ${result.imported_count} nodes. Health checks are running in the background.`);
     }
   });
 

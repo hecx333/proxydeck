@@ -29,12 +29,7 @@ export interface Subscription {
 export interface SubscriptionSyncResult {
   ok: boolean;
   imported_count: number;
-  healthcheck: {
-    total: number;
-    healthy: number;
-    unhealthy: number;
-    failed: number;
-  };
+  healthcheck_started?: boolean;
 }
 
 export interface ProxyNode {
