@@ -22,9 +22,19 @@ func TestParseUsername(t *testing.T) {
 	}
 }
 
+func TestParseUsernameDashFormat(t *testing.T) {
+	uid, filters := ParseUsername("yrp433823-region-AU-st-Victoria-city-Melbourne-sid-xuaui123")
+	if uid != "yrp433823" {
+		t.Fatalf("uid = %q, want yrp433823", uid)
+	}
+	if filters.Region != "AU" || filters.State != "Victoria" || filters.City != "Melbourne" || filters.SID != "xuaui123" {
+		t.Fatalf("unexpected filters: %+v", filters)
+	}
+}
+
 func TestFilterHashStable(t *testing.T) {
-	first := FilterHash(Filters{Region: "SG", City: "Singapore", ASN: "AS1", ISP: "Test"})
-	second := FilterHash(Filters{Region: "SG", City: "Singapore", ASN: "AS1", ISP: "Test"})
+	first := FilterHash(Filters{Region: "SG", State: "Singapore", City: "Singapore", ASN: "AS1", ISP: "Test"})
+	second := FilterHash(Filters{Region: "SG", State: "Singapore", City: "Singapore", ASN: "AS1", ISP: "Test"})
 	if first != second {
 		t.Fatalf("hash not stable: %q != %q", first, second)
 	}

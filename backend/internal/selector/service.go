@@ -19,6 +19,7 @@ var ErrNoHealthyNode = errors.New("no healthy node available")
 
 type Filters struct {
 	Region string `json:"region"`
+	State  string `json:"state"`
 	City   string `json:"city"`
 	ASN    string `json:"asn"`
 	ISP    string `json:"isp"`
@@ -36,6 +37,13 @@ func NewService(db *gorm.DB, store *redisstore.Store, stickyTTL time.Duration) *
 }
 
 func ParseUsername(raw string) (string, Filters) {
+	if strings.Contains(raw, "__") {
+		return parseLegacyUsername(raw)
+	}
+	return parseDashUsername(raw)
+}
+
+func parseLegacyUsername(raw string) (string, Filters) {
 	parts := strings.Split(raw, "__")
 	filters := Filters{}
 	if len(parts) == 0 {
@@ -50,6 +58,8 @@ func ParseUsername(raw string) (string, Filters) {
 		switch kv[0] {
 		case "region":
 			filters.Region = kv[1]
+		case "st", "state":
+			filters.State = kv[1]
 		case "city":
 			filters.City = kv[1]
 		case "asn":
@@ -63,8 +73,43 @@ func ParseUsername(raw string) (string, Filters) {
 	return uid, filters
 }
 
+func parseDashUsername(raw string) (string, Filters) {
+	filters := Filters{}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", filters
+	}
+	parts := strings.Split(raw, "-")
+	if len(parts) == 0 {
+		return "", filters
+	}
+	uid := strings.TrimSpace(parts[0])
+	if len(parts) == 1 {
+		return uid, filters
+	}
+	for i := 1; i < len(parts)-1; i += 2 {
+		key := strings.TrimSpace(parts[i])
+		value := strings.TrimSpace(parts[i+1])
+		switch key {
+		case "region":
+			filters.Region = value
+		case "st", "state":
+			filters.State = value
+		case "city":
+			filters.City = value
+		case "asn":
+			filters.ASN = value
+		case "isp":
+			filters.ISP = value
+		case "sid":
+			filters.SID = value
+		}
+	}
+	return uid, filters
+}
+
 func FilterHash(f Filters) string {
-	sum := sha1.Sum([]byte(f.Region + "|" + f.City + "|" + f.ASN + "|" + f.ISP))
+	sum := sha1.Sum([]byte(f.Region + "|" + f.State + "|" + f.City + "|" + f.ASN + "|" + f.ISP))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -114,7 +159,10 @@ func (s *Service) candidates(ctx context.Context, f Filters) ([]model.ProxyNode,
 	}
 	query := s.db.Where("healthy = ? AND disabled = ?", true, false)
 	if f.Region != "" {
-		query = query.Where("detected_region = ? OR expected_region = ?", f.Region, f.Region)
+		query = query.Where("country = ? OR detected_region = ? OR expected_region = ?", f.Region, f.Region, f.Region)
+	}
+	if f.State != "" {
+		query = query.Where("detected_region = ?", f.State)
 	}
 	if f.City != "" {
 		query = query.Where("city = ?", f.City)
@@ -133,8 +181,11 @@ func (s *Service) candidates(ctx context.Context, f Filters) ([]model.ProxyNode,
 
 func (s *Service) matchNodeIDs(ctx context.Context, f Filters) ([]uint, bool, error) {
 	sets := []string{"healthy_nodes"}
-	if f.Region != "" {
+	if f.Region != "" && f.State == "" {
 		sets = append(sets, redisstore.RegionKey(f.Region))
+	}
+	if f.State != "" {
+		return nil, false, nil
 	}
 	if f.City != "" {
 		sets = append(sets, redisstore.CityKey(f.City))

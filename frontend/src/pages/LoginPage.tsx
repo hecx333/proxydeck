@@ -1,9 +1,10 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Button, Card, Form, Input, Typography, message, Space } from "antd";
-import { UserOutlined, LockOutlined, RadarChartOutlined } from "@ant-design/icons";
+import { UserOutlined, LockOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { login, me } from "../api/auth";
+import { BrandMark } from "../components/BrandMark";
 import { useAuthStore } from "../store/auth";
 
 export function LoginPage() {
@@ -57,38 +58,13 @@ export function LoginPage() {
         }}
       >
         <div style={{ textAlign: "center", marginBottom: 28 }}>
-          <Space direction="vertical" size={12}>
-            <div style={{ 
-              width: 52, 
-              height: 52, 
-              borderRadius: 14, 
-              background: "linear-gradient(135deg, #0d9488, #6366f1)", 
-              display: "grid", 
-              placeItems: "center",
-              margin: "0 auto",
-              boxShadow: "0 8px 16px rgba(13, 148, 136, 0.3)"
-            }}>
-              <RadarChartOutlined style={{ color: "white", fontSize: 26 }} />
+          <Space direction="vertical" size={14}>
+            <div style={{ display: "flex", justifyContent: "center" }}>
+              <BrandMark size={56} showWordmark stacked inverse />
             </div>
-            <div>
-              <Typography.Title 
-                level={2} 
-                style={{ 
-                  margin: 0, 
-                  color: "#ffffff", 
-                  fontWeight: 700, 
-                  letterSpacing: "-0.5px",
-                  background: "linear-gradient(90deg, #ffffff, #94a3b8)",
-                  WebkitBackgroundClip: "text",
-                  WebkitTextFillColor: "transparent"
-                }}
-              >
-                ProxyDeck Gateway
-              </Typography.Title>
-              <Typography.Text style={{ color: "#94a3b8", fontSize: 13, marginTop: 4, display: "block" }}>
-                Region-aware Sticky Proxy Control Panel
-              </Typography.Text>
-            </div>
+            <Typography.Text style={{ color: "#94a3b8", fontSize: 13, display: "block" }}>
+              Region-aware sticky proxy control panel
+            </Typography.Text>
           </Space>
         </div>
 

@@ -2,6 +2,7 @@ import { LogoutOutlined, RadarChartOutlined, TeamOutlined, CloudServerOutlined, 
 import { Layout, Menu, Space, Typography, Button } from "antd";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { logout } from "../api/auth";
+import { BrandMark } from "../components/BrandMark";
 import { useAuthStore } from "../store/auth";
 
 const items = [
@@ -28,14 +29,7 @@ export function AdminLayout() {
         style={{ height: "100vh", position: "sticky", top: 0, left: 0 }}
       >
         <div style={{ padding: "32px 24px 20px 24px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ width: 32, height: 32, borderRadius: 8, background: "linear-gradient(135deg, #0d9488, #6366f1)", display: "grid", placeItems: "center" }}>
-              <RadarChartOutlined style={{ color: "white", fontSize: 18 }} />
-            </div>
-            <Typography.Title level={3} style={{ color: "white", margin: 0, fontSize: 20, fontWeight: 700, letterSpacing: "-0.5px" }}>
-              ProxyDeck
-            </Typography.Title>
-          </div>
+          <BrandMark size={34} showWordmark inverse />
           <Typography.Text style={{ color: "rgba(255,255,255,0.45)", fontSize: 10, display: "block", marginTop: 8, letterSpacing: "0.5px" }}>
             REGION-AWARE GATEWAY
           </Typography.Text>
