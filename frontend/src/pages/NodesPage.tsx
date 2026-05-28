@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Drawer, Input, Space, Table, Dropdown, MenuProps, Tooltip, Tag, Typography, Badge, Row, Col } from "antd";
+import { Button, Drawer, Input, Space, Table, Dropdown, MenuProps, Tooltip, Tag, Typography, Badge, Row, Col, Upload, Select, message } from "antd";
 import { 
   FilterOutlined, 
   SyncOutlined, 
@@ -10,16 +10,18 @@ import {
   PlayCircleOutlined, 
   StopOutlined,
   SearchOutlined,
-  EnvironmentOutlined
+  EnvironmentOutlined,
+  UploadOutlined,
+  PlusOutlined
 } from "@ant-design/icons";
 import { useState } from "react";
-import { checkNode, deleteNode, getNode, listNodes, toggleNodeDisabled } from "../api/nodes";
+import { checkNode, deleteNode, getNode, importNodes, listNodes, toggleNodeDisabled } from "../api/nodes";
 import { ConfirmButton } from "../components/ConfirmButton";
 import { DateTimeText } from "../components/DateTimeText";
 import { JsonViewer } from "../components/JsonViewer";
 import { PageContainer } from "../components/PageContainer";
 import { RegionTag } from "../components/RegionTag";
-import { ProxyNode } from "../types";
+import { ManualImportNode, ProxyNode } from "../types";
 
 export function NodesPage() {
   const [keyword, setKeyword] = useState("");
@@ -36,6 +38,9 @@ export function NodesPage() {
   
   const [selectedID, setSelectedID] = useState<number | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importProtocol, setImportProtocol] = useState("http");
+  const [importText, setImportText] = useState("");
   
   const queryClient = useQueryClient();
   const { data = [], isLoading } = useQuery<ProxyNode[]>({
@@ -55,6 +60,17 @@ export function NodesPage() {
   const checkMutation = useMutation({
     mutationFn: checkNode,
     onSuccess: refresh
+  });
+
+  const importMutation = useMutation({
+    mutationFn: ({ protocol, nodes }: { protocol: string; nodes: ManualImportNode[] }) => importNodes(protocol, nodes),
+    onSuccess: async (result) => {
+      await refresh();
+      setImportOpen(false);
+      setImportText("");
+      message.success(`Imported ${result.imported_count} nodes. Health checks are running in the background.`);
+    },
+    onError: () => message.error("Import failed. Please verify the proxy list format.")
   });
 
   const applyFilters = () => {
@@ -86,11 +102,52 @@ export function NodesPage() {
     return <Tag color="error" bordered={false}>{ms} ms</Tag>;
   };
 
+  const parseManualImportText = (source: string, protocol: string): ManualImportNode[] => {
+    const lines = source
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith("#") && !line.startsWith("//"));
+    if (lines.length === 0) {
+      throw new Error("empty");
+    }
+    return lines.map((line) => {
+      const parts = line.split(":");
+      if (parts.length !== 2 && parts.length !== 4) {
+        throw new Error(`Invalid line: ${line}`);
+      }
+      const host = parts[0]?.trim();
+      const port = Number(parts[1]?.trim());
+      if (!host || !Number.isInteger(port) || port <= 0) {
+        throw new Error(`Invalid line: ${line}`);
+      }
+      return {
+        protocol,
+        host,
+        port,
+        username: parts.length === 4 ? parts[2]?.trim() : "",
+        password: parts.length === 4 ? parts[3]?.trim() : "",
+        tag: `${host}:${port}`,
+      };
+    });
+  };
+
+  const submitImport = () => {
+    try {
+      const nodes = parseManualImportText(importText, importProtocol);
+      importMutation.mutate({ protocol: importProtocol, nodes });
+    } catch {
+      message.error("Expected lines in host:port or host:port:username:password format.");
+    }
+  };
+
   return (
     <PageContainer
       title="Nodes"
       extra={
         <Space>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setImportOpen(true)}>
+            Import Nodes
+          </Button>
           <Button 
             icon={<FilterOutlined />} 
             onClick={() => setFiltersOpen(!filtersOpen)}
@@ -340,6 +397,56 @@ export function NodesPage() {
         style={{ backdropFilter: "blur(8px)" }}
       >
         <JsonViewer value={detail} />
+      </Drawer>
+
+      <Drawer
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        width={520}
+        title="Import Manual Proxy List"
+      >
+        <Space direction="vertical" size={16} style={{ width: "100%" }}>
+          <div>
+            <Typography.Text strong style={{ display: "block", marginBottom: 6 }}>Protocol</Typography.Text>
+            <Select
+              value={importProtocol}
+              onChange={setImportProtocol}
+              style={{ width: "100%" }}
+              options={[
+                { label: "HTTP", value: "http" },
+                { label: "SOCKS5", value: "socks5" },
+                { label: "SOCKS", value: "socks" }
+              ]}
+            />
+          </div>
+          <div>
+            <Typography.Text strong style={{ display: "block", marginBottom: 6 }}>Paste proxy list</Typography.Text>
+            <Input.TextArea
+              rows={12}
+              value={importText}
+              onChange={(e) => setImportText(e.target.value)}
+              placeholder={"38.154.203.95:5863:gjpumdzo:fiva3njr8qhu\n198.105.121.200:6462"}
+            />
+            <Typography.Text type="secondary" style={{ display: "block", marginTop: 8, fontSize: 12 }}>
+              Supported lines: `host:port` or `host:port:username:password`
+            </Typography.Text>
+          </div>
+          <Upload
+            accept=".txt,text/plain"
+            showUploadList={false}
+            beforeUpload={async (file) => {
+              const text = await file.text();
+              setImportText(text);
+              message.success(`Loaded ${file.name}`);
+              return false;
+            }}
+          >
+            <Button icon={<UploadOutlined />}>Load From TXT File</Button>
+          </Upload>
+          <Button type="primary" size="large" loading={importMutation.isPending} onClick={submitImport}>
+            Parse & Import Nodes
+          </Button>
+        </Space>
       </Drawer>
     </PageContainer>
   );

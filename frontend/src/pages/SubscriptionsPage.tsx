@@ -278,7 +278,8 @@ export function SubscriptionsPage() {
                 { label: "Mihomo YAML format", value: "mihomo" },
                 { label: "Surge INI format", value: "surge" },
                 { label: "Surfboard INI format", value: "surfboard" },
-                { label: "Quantumult X line format", value: "quantumultx" }
+                { label: "Quantumult X line format", value: "quantumultx" },
+                { label: "Manual proxy list URL", value: "manual" }
               ]}
             />
           </Form.Item>

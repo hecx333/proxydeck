@@ -9,10 +9,13 @@ import (
 	"testing"
 	"time"
 
+	"proxydeck/backend/internal/auth"
 	"proxydeck/backend/internal/db"
 	"proxydeck/backend/internal/model"
 	"proxydeck/backend/internal/quota"
 	"proxydeck/backend/internal/redisstore"
+	"proxydeck/backend/internal/retry"
+	"proxydeck/backend/internal/subscription"
 
 	"github.com/gin-gonic/gin"
 )
@@ -462,6 +465,67 @@ func TestCreateSubscriptionDefaultsEnabledToTrueAndNormalizesType(t *testing.T) 
 	}
 	if sub.Type != "singbox" {
 		t.Fatalf("type = %q, want singbox", sub.Type)
+	}
+}
+
+func TestCreateSubscriptionAcceptsManualType(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	sqliteDB, err := db.Open(t.TempDir() + "/app.db")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	server := &Server{db: sqliteDB}
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/subscriptions", strings.NewReader(`{"name":"webshare","type":"manual","url":"https://example.com/proxies.txt"}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	server.createSubscription(ctx)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	var sub model.Subscription
+	if err := sqliteDB.First(&sub, 1).Error; err != nil {
+		t.Fatalf("load subscription: %v", err)
+	}
+	if sub.Type != "manual" {
+		t.Fatalf("type = %q, want manual", sub.Type)
+	}
+}
+
+func TestImportNodesCreatesManualHTTPNodes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	sqliteDB, err := db.Open(t.TempDir() + "/app.db")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	store := redisstore.New("127.0.0.1:6379", "", 0)
+	cipher, err := auth.NewCipher("test-secret")
+	if err != nil {
+		t.Fatalf("new cipher: %v", err)
+	}
+	server := &Server{
+		db:           sqliteDB,
+		subscription: subscription.NewService(sqliteDB, store, cipher, nil, retry.DefaultConfig(), nil),
+	}
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/nodes/import", strings.NewReader(`{"protocol":"http","nodes":[{"host":"38.154.203.95","port":5863,"username":"gjpumdzo","password":"fiva3njr8qhu"},{"host":"198.105.121.200","port":6462}]}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	ctx.Set("admin_username", "admin")
+
+	server.importNodes(ctx)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body=%s", recorder.Code, recorder.Body.String())
+	}
+	var count int64
+	if err := sqliteDB.Model(&model.ProxyNode{}).Count(&count).Error; err != nil {
+		t.Fatalf("count nodes: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("node count = %d, want 2", count)
 	}
 }
 

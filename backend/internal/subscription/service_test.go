@@ -398,6 +398,23 @@ proxies:
 	}
 }
 
+func TestParseManualProxyList(t *testing.T) {
+	body := []byte("38.154.203.95:5863:gjpumdzo:fiva3njr8qhu\n198.105.121.200:6462\n")
+	nodes, err := ParseManualProxyList(body, "http")
+	if err != nil {
+		t.Fatalf("parse manual proxy list: %v", err)
+	}
+	if len(nodes) != 2 {
+		t.Fatalf("nodes len = %d, want 2", len(nodes))
+	}
+	if nodes[0].Host != "38.154.203.95" || nodes[0].Port != 5863 || nodes[0].Username != "gjpumdzo" || nodes[0].Password != "fiva3njr8qhu" {
+		t.Fatalf("unexpected first node: %+v", nodes[0])
+	}
+	if nodes[1].Host != "198.105.121.200" || nodes[1].Port != 6462 || nodes[1].Username != "" || nodes[1].Password != "" {
+		t.Fatalf("unexpected second node: %+v", nodes[1])
+	}
+}
+
 func TestSyncParsesSurgeSubscription(t *testing.T) {
 	sqliteDB, err := db.Open(t.TempDir() + "/app.db")
 	if err != nil {

@@ -88,6 +88,15 @@ type parsedNode struct {
 	RawJSON        string
 }
 
+type ManualNodeInput struct {
+	Protocol string `json:"protocol"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Tag      string `json:"tag"`
+}
+
 func (s *Service) Sync(ctx context.Context, subID uint) (SyncResult, error) {
 	result := SyncResult{SubscriptionID: subID}
 	if s.metrics != nil {
@@ -111,41 +120,12 @@ func (s *Service) Sync(ctx context.Context, subID uint) (SyncResult, error) {
 		}
 		return result, err
 	}
-	importedIDs := make([]uint, 0, len(nodes))
-	for _, item := range nodes {
-		userEnc, _ := s.cipher.Encrypt(item.Username)
-		passEnc, _ := s.cipher.Encrypt(item.Password)
-		node := model.ProxyNode{
-			NodeKey:             fmt.Sprintf("%s://%s:%d", item.Protocol, item.Host, item.Port),
-			Protocol:            item.Protocol,
-			Host:                item.Host,
-			Port:                item.Port,
-			UpstreamUsernameEnc: userEnc,
-			UpstreamPasswordEnc: passEnc,
-			TLSEnabled:          item.TLSEnabled,
-			TLSSkipVerify:       item.TLSSkipVerify,
-			ServerName:          item.ServerName,
-			Tag:                 item.Tag,
-			ExpectedRegion:      item.ExpectedRegion,
-			SubscriptionID:      sub.ID,
-			RawJSON:             item.RawJSON,
+	importedIDs, err := s.persistParsedNodes(ctx, nodes, &sub.ID)
+	if err != nil {
+		if s.metrics != nil {
+			s.metrics.IncSubscriptionSyncFailure()
 		}
-		if err := s.db.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "protocol"}, {Name: "host"}, {Name: "port"}},
-			DoUpdates: clause.AssignmentColumns([]string{"tag", "expected_region", "subscription_id", "raw_json", "upstream_username_enc", "upstream_password_enc", "tls_enabled", "tls_skip_verify", "server_name", "updated_at"}),
-		}).Create(&node).Error; err != nil {
-			if s.metrics != nil {
-				s.metrics.IncSubscriptionSyncFailure()
-			}
-			return result, err
-		}
-		var persisted model.ProxyNode
-		if err := s.db.Where("protocol = ? AND host = ? AND port = ?", node.Protocol, node.Host, node.Port).First(&persisted).Error; err == nil {
-			_ = s.db.Where("subscription_id = ? AND node_id = ?", sub.ID, persisted.ID).
-				FirstOrCreate(&model.SubscriptionNode{SubscriptionID: sub.ID, NodeID: persisted.ID, RawTag: item.Tag, AliasTag: item.Tag}).Error
-			_ = s.store.CacheNode(ctx, persisted)
-			importedIDs = append(importedIDs, persisted.ID)
-		}
+		return result, err
 	}
 	if err := s.pruneSubscriptionNodes(ctx, sub.ID, importedIDs); err != nil {
 		if s.metrics != nil {
@@ -155,6 +135,52 @@ func (s *Service) Sync(ctx context.Context, subID uint) (SyncResult, error) {
 	}
 	now := time.Now()
 	if err := s.db.Model(&sub).Update("last_sync_at", &now).Error; err != nil {
+		return result, err
+	}
+	result.ImportedNodeIDs = importedIDs
+	result.ImportedCount = len(importedIDs)
+	return result, nil
+}
+
+func (s *Service) ImportManualNodes(ctx context.Context, inputs []ManualNodeInput) (SyncResult, error) {
+	result := SyncResult{}
+	nodes := make([]parsedNode, 0, len(inputs))
+	for _, input := range inputs {
+		protocol := strings.ToLower(strings.TrimSpace(input.Protocol))
+		if protocol == "" {
+			protocol = "http"
+		}
+		if !isSupportedOutboundProtocol(protocol) {
+			return result, fmt.Errorf("unsupported manual protocol: %s", input.Protocol)
+		}
+		host := strings.TrimSpace(input.Host)
+		if host == "" || input.Port <= 0 {
+			return result, fmt.Errorf("invalid manual node: host and port are required")
+		}
+		tag := strings.TrimSpace(input.Tag)
+		if tag == "" {
+			tag = fmt.Sprintf("%s:%d", host, input.Port)
+		}
+		rawJSON, _ := json.Marshal(map[string]any{
+			"source_format": "manual",
+			"type":          protocol,
+			"server":        host,
+			"server_port":   input.Port,
+			"tag":           tag,
+		})
+		nodes = append(nodes, parsedNode{
+			Protocol:       protocol,
+			Host:           host,
+			Port:           input.Port,
+			Username:       strings.TrimSpace(input.Username),
+			Password:       strings.TrimSpace(input.Password),
+			Tag:            tag,
+			ExpectedRegion: inferRegion(tag),
+			RawJSON:        string(rawJSON),
+		})
+	}
+	importedIDs, err := s.persistParsedNodes(ctx, nodes, nil)
+	if err != nil {
 		return result, err
 	}
 	result.ImportedNodeIDs = importedIDs
@@ -183,9 +209,41 @@ func parseSubscriptionBody(subType string, body []byte) ([]parsedNode, error) {
 		return parseSurgeSubscription(body)
 	case "quantumultx":
 		return parseQuantumultXSubscription(body)
+	case "manual":
+		return ParseManualProxyList(body, "http")
 	default:
 		return nil, fmt.Errorf("unsupported subscription type: %s", subType)
 	}
+}
+
+func ParseManualProxyList(body []byte, defaultProtocol string) ([]parsedNode, error) {
+	protocol := strings.ToLower(strings.TrimSpace(defaultProtocol))
+	if protocol == "" {
+		protocol = "http"
+	}
+	if !isSupportedOutboundProtocol(protocol) {
+		return nil, fmt.Errorf("unsupported manual protocol: %s", defaultProtocol)
+	}
+	lines := strings.Split(string(body), "\n")
+	nodes := make([]parsedNode, 0, len(lines))
+	for _, rawLine := range lines {
+		line := strings.TrimSpace(rawLine)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") {
+			continue
+		}
+		node, ok := parseManualProxyLine(line, protocol)
+		if !ok {
+			return nil, fmt.Errorf("invalid manual proxy line: %s", line)
+		}
+		nodes = append(nodes, node)
+	}
+	if len(nodes) == 0 {
+		return nil, fmt.Errorf("manual proxy list is empty")
+	}
+	return nodes, nil
 }
 
 func parseSingboxSubscription(body []byte) ([]parsedNode, error) {
@@ -656,6 +714,45 @@ func parseShadowrocketCredentials(u *url.URL) (string, string) {
 	return parts[0], parts[1]
 }
 
+func parseManualProxyLine(line, protocol string) (parsedNode, bool) {
+	parts := strings.Split(strings.TrimSpace(line), ":")
+	if len(parts) != 2 && len(parts) != 4 {
+		return parsedNode{}, false
+	}
+	host := strings.TrimSpace(parts[0])
+	port, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err != nil || host == "" || port <= 0 {
+		return parsedNode{}, false
+	}
+	username := ""
+	password := ""
+	if len(parts) == 4 {
+		username = strings.TrimSpace(parts[2])
+		password = strings.TrimSpace(parts[3])
+		if username == "" || password == "" {
+			return parsedNode{}, false
+		}
+	}
+	tag := fmt.Sprintf("%s:%d", host, port)
+	rawJSON, _ := json.Marshal(map[string]any{
+		"source_format": "manual",
+		"type":          protocol,
+		"server":        host,
+		"server_port":   port,
+		"tag":           tag,
+	})
+	return parsedNode{
+		Protocol:       protocol,
+		Host:           host,
+		Port:           port,
+		Username:       username,
+		Password:       password,
+		Tag:            tag,
+		ExpectedRegion: inferRegion(tag),
+		RawJSON:        string(rawJSON),
+	}, true
+}
+
 func parseShadowrocketShadowsocksNode(raw string) (parsedNode, bool) {
 	trimmed := strings.TrimSpace(raw)
 	u, err := url.Parse(trimmed)
@@ -927,6 +1024,51 @@ func parsePortValue(value any) (int, bool) {
 	default:
 		return 0, false
 	}
+}
+
+func (s *Service) persistParsedNodes(ctx context.Context, nodes []parsedNode, subscriptionID *uint) ([]uint, error) {
+	importedIDs := make([]uint, 0, len(nodes))
+	for _, item := range nodes {
+		userEnc, _ := s.cipher.Encrypt(item.Username)
+		passEnc, _ := s.cipher.Encrypt(item.Password)
+		node := model.ProxyNode{
+			NodeKey:             fmt.Sprintf("%s://%s:%d", item.Protocol, item.Host, item.Port),
+			Protocol:            item.Protocol,
+			Host:                item.Host,
+			Port:                item.Port,
+			UpstreamUsernameEnc: userEnc,
+			UpstreamPasswordEnc: passEnc,
+			TLSEnabled:          item.TLSEnabled,
+			TLSSkipVerify:       item.TLSSkipVerify,
+			ServerName:          item.ServerName,
+			Tag:                 item.Tag,
+			ExpectedRegion:      item.ExpectedRegion,
+			RawJSON:             item.RawJSON,
+		}
+		if subscriptionID != nil {
+			node.SubscriptionID = *subscriptionID
+		}
+		updates := []string{"tag", "expected_region", "raw_json", "upstream_username_enc", "upstream_password_enc", "tls_enabled", "tls_skip_verify", "server_name", "updated_at"}
+		if subscriptionID != nil {
+			updates = append(updates, "subscription_id")
+		}
+		if err := s.db.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "protocol"}, {Name: "host"}, {Name: "port"}},
+			DoUpdates: clause.AssignmentColumns(updates),
+		}).Create(&node).Error; err != nil {
+			return nil, err
+		}
+		var persisted model.ProxyNode
+		if err := s.db.Where("protocol = ? AND host = ? AND port = ?", node.Protocol, node.Host, node.Port).First(&persisted).Error; err == nil {
+			if subscriptionID != nil {
+				_ = s.db.Where("subscription_id = ? AND node_id = ?", *subscriptionID, persisted.ID).
+					FirstOrCreate(&model.SubscriptionNode{SubscriptionID: *subscriptionID, NodeID: persisted.ID, RawTag: item.Tag, AliasTag: item.Tag}).Error
+			}
+			_ = s.store.CacheNode(ctx, persisted)
+			importedIDs = append(importedIDs, persisted.ID)
+		}
+	}
+	return importedIDs, nil
 }
 
 func splitCommaSeparated(value string) []string {

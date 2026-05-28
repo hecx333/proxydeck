@@ -1,3 +1,4 @@
+import { ManualImportNode, NodeImportResult } from "../types";
 import client from "./client";
 
 export async function listNodes(params?: Record<string, unknown>) {
@@ -22,5 +23,10 @@ export async function toggleNodeDisabled(id: number, disabled: boolean) {
 
 export async function deleteNode(id: number) {
   const { data } = await client.delete(`/nodes/${id}`);
+  return data;
+}
+
+export async function importNodes(protocol: string, nodes: ManualImportNode[]) {
+  const { data } = await client.post<NodeImportResult>("/nodes/import", { protocol, nodes });
   return data;
 }

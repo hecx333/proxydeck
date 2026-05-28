@@ -76,6 +76,7 @@ func (s *Server) Handler() http.Handler {
 	protected.POST("/subscriptions/:id/sync", s.syncSubscription)
 
 	protected.GET("/nodes", s.listNodes)
+	protected.POST("/nodes/import", s.importNodes)
 	protected.GET("/nodes/:id", s.getNode)
 	protected.POST("/nodes/:id/check", s.checkNode)
 	protected.PUT("/nodes/:id/disable", s.toggleNodeDisabled)
@@ -427,7 +428,7 @@ func (s *Server) syncSubscription(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
-	if len(syncResult.ImportedNodeIDs) > 0 {
+	if s.healthcheck != nil && len(syncResult.ImportedNodeIDs) > 0 {
 		go s.healthcheck.CheckNodes(context.Background(), syncResult.ImportedNodeIDs)
 	}
 	s.audit(c, "sync_subscription", "subscription", c.Param("id"), "")
@@ -462,6 +463,44 @@ func (s *Server) listNodes(c *gin.Context) {
 		resp = append(resp, nodePayload(item))
 	}
 	c.JSON(http.StatusOK, gin.H{"items": resp})
+}
+
+func (s *Server) importNodes(c *gin.Context) {
+	var req struct {
+		Protocol string                         `json:"protocol"`
+		Nodes    []subscription.ManualNodeInput `json:"nodes" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if len(req.Nodes) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "nodes are required"})
+		return
+	}
+	protocol := strings.ToLower(strings.TrimSpace(req.Protocol))
+	if protocol == "" {
+		protocol = "http"
+	}
+	for index := range req.Nodes {
+		if strings.TrimSpace(req.Nodes[index].Protocol) == "" {
+			req.Nodes[index].Protocol = protocol
+		}
+	}
+	result, err := s.subscription.ImportManualNodes(c.Request.Context(), req.Nodes)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if s.healthcheck != nil && len(result.ImportedNodeIDs) > 0 {
+		go s.healthcheck.CheckNodes(context.Background(), result.ImportedNodeIDs)
+	}
+	s.audit(c, "import_nodes", "node", "", strconv.Itoa(result.ImportedCount))
+	c.JSON(http.StatusOK, gin.H{
+		"ok":                  true,
+		"imported_count":      result.ImportedCount,
+		"healthcheck_started": len(result.ImportedNodeIDs) > 0,
+	})
 }
 
 func (s *Server) getNode(c *gin.Context) {
@@ -740,7 +779,7 @@ func (s *Server) managedUserByID(id string) (*model.User, error) {
 
 func isSupportedSubscriptionType(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "singbox", "shadowrocket", "clash", "mihomo", "surge", "surfboard", "quantumultx":
+	case "singbox", "shadowrocket", "clash", "mihomo", "surge", "surfboard", "quantumultx", "manual":
 		return true
 	default:
 		return false

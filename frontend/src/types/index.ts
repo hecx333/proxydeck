@@ -55,6 +55,21 @@ export interface ProxyNode {
   last_check_at?: string | null;
 }
 
+export interface ManualImportNode {
+  protocol?: string;
+  host: string;
+  port: number;
+  username?: string;
+  password?: string;
+  tag?: string;
+}
+
+export interface NodeImportResult {
+  ok: boolean;
+  imported_count: number;
+  healthcheck_started?: boolean;
+}
+
 export interface AuditLog {
   id: number;
   operator: string;
